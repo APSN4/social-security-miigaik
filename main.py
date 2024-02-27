@@ -8,6 +8,7 @@ from os import getenv
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold
@@ -20,7 +21,11 @@ MAIN_MENU_TEXT = getenv("MAIN_MENU_TEXT")
 HELLO_MSG = getenv("HELLO_MSG").replace("\\n", "\n")
 HELLO_MSG_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_BUTTONS"))
 HELLO_MSG_IN_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_IN_BUTTONS"))
+
+ANKETA_TEXT = getenv("ANKETA_TEXT")
 ANY_BUTTONS = ast.literal_eval(getenv("ANY_BUTTONS"))
+ANKETA_Q = ast.literal_eval(getenv("ANKETA_Q"))
+ANKETA_TABLES = ast.literal_eval(getenv("ANKETA_TABLES"))
 
 # All handlers should be attached to the Router (or Dispatcher)
 dp = Dispatcher()
@@ -34,6 +39,9 @@ async def command_start_handler(message: Message) -> None:
         builder.row(types.InlineKeyboardButton(
             text=key, callback_data=value[0])
         )
+    builder.row(types.InlineKeyboardButton(
+        text=ANKETA_TEXT, callback_data="anketa")
+    )
     await message.delete()
     await message.answer(HELLO_MSG, reply_markup=builder.as_markup())
 
@@ -78,7 +86,7 @@ async def callback_handler(call: types.CallbackQuery):
                     answer = value[2]
 
     builder.row(types.InlineKeyboardButton(
-        text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
+        text=ANKETA_TEXT, callback_data="anketa")
     )
     await message.answer(answer, reply_markup=builder.as_markup())
 

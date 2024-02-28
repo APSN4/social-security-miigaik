@@ -1,17 +1,16 @@
 import ast
 import asyncio
-import json
 import logging
 import sys
 from os import getenv
 
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.enums import ParseMode
+from aiogram import Bot, Dispatcher, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.utils.markdown import hbold
 from dotenv import load_dotenv
 
 # .env
@@ -22,13 +21,23 @@ HELLO_MSG = getenv("HELLO_MSG").replace("\\n", "\n")
 HELLO_MSG_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_BUTTONS"))
 HELLO_MSG_IN_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_IN_BUTTONS"))
 
-ANKETA_TEXT = getenv("ANKETA_TEXT")
+FORM_TEXT = getenv("FORM_TEXT")
 ANY_BUTTONS = ast.literal_eval(getenv("ANY_BUTTONS"))
-ANKETA_Q = ast.literal_eval(getenv("ANKETA_Q"))
-ANKETA_TABLES = ast.literal_eval(getenv("ANKETA_TABLES"))
+FORM_Q = ast.literal_eval(getenv("FORM_Q"))
+FORM_TABLES = ast.literal_eval(getenv("FORM_TABLES"))
+
+hash_users = {}
 
 # All handlers should be attached to the Router (or Dispatcher)
 dp = Dispatcher()
+
+
+class TaskForm(StatesGroup):
+    pass
+
+
+for question_index in range(len(FORM_Q)):
+    setattr(TaskForm, str(question_index), State())
 
 
 @dp.message(CommandStart())
@@ -40,9 +49,12 @@ async def command_start_handler(message: Message) -> None:
             text=key, callback_data=value[0])
         )
     builder.row(types.InlineKeyboardButton(
-        text=ANKETA_TEXT, callback_data="anketa")
+        text=FORM_TEXT, callback_data="form")
     )
-    await message.delete()
+    try:
+        await message.delete()
+    except TelegramBadRequest as e:
+        print(f"Не удалось удалить сообщение: {e}")
     await message.answer(HELLO_MSG, reply_markup=builder.as_markup())
 
 
@@ -86,14 +98,68 @@ async def callback_handler(call: types.CallbackQuery):
                     answer = value[2]
 
     builder.row(types.InlineKeyboardButton(
-        text=ANKETA_TEXT, callback_data="anketa")
+        text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
     await message.answer(answer, reply_markup=builder.as_markup())
+
+
+async def logic_form(current_state_index, message: types.Message, state: FSMContext):
+    builder = InlineKeyboardBuilder()
+    keys = list(FORM_Q.keys())
+    answer = keys[current_state_index]
+    for value in FORM_Q[answer]:
+        builder.row(types.InlineKeyboardButton(
+            text=value, callback_data="form_btm")
+        )
+    builder.row(types.InlineKeyboardButton(
+        text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
+    )
+    await message.answer(answer, reply_markup=builder.as_markup())
+
+async def universal_handler(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        current_state_index = int(current_state)
+        await logic_form(current_state_index, message, state)
+        next_state_index = current_state_index + 1
+        next_state_name = str(next_state_index)
+        if hasattr(TaskForm, next_state_name):
+            await state.update_data({current_state: message.text})
+            await state.set_state(next_state_name)
+        else:
+            await state.set_state(None)
+    else:
+        await state.set_state("0")
+        await universal_handler(message, state)
+    try:
+        await message.delete()
+    except TelegramBadRequest as e:
+        print(f"Не удалось удалить сообщение: {e}")
+
+
+@dp.callback_query(lambda call: call.data == "form")
+async def callback_handler(call: types.CallbackQuery, state: FSMContext):
+    await universal_handler(call.message, state)
+
+
+@dp.callback_query(lambda call: call.data == "form_btm")
+async def callback_handler(call: types.CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+    if int(current_state) == len(FORM_Q) - 1:
+        try:
+            await call.message.delete()
+            await call.message.answer("Анкета успешно пройдена")
+            await command_start_handler(call.message)
+        except TelegramBadRequest as e:
+            print(f"Не удалось удалить сообщение: {e}")
+    else:
+        await universal_handler(call.message, state)
 
 
 @dp.callback_query(lambda call: call.data == "back_to_main_menu")
 async def callback_handler(call: types.CallbackQuery):
     await command_start_handler(call.message)
+
 
 async def main() -> None:
     bot = Bot(TOKEN)

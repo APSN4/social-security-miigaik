@@ -145,7 +145,7 @@ async def callback_handler(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda call: call.data == "form_btm")
 async def callback_handler(call: types.CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
-    if int(current_state) == len(FORM_Q) - 1:
+    if current_state is None:
         try:
             await call.message.delete()
             await call.message.answer("Анкета успешно пройдена")

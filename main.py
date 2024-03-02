@@ -13,6 +13,9 @@ from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
+from app.domain.dto.user import User
+from config.database import Database
+
 # .env
 load_dotenv()
 TOKEN = getenv("BOT_TOKEN")
@@ -22,14 +25,18 @@ HELLO_MSG_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_BUTTONS"))
 HELLO_MSG_IN_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_IN_BUTTONS"))
 
 FORM_TEXT = getenv("FORM_TEXT")
+FORM_COMPLETED_TEXT = getenv("FORM_COMPLETED_TEXT")
 ANY_BUTTONS = ast.literal_eval(getenv("ANY_BUTTONS"))
 FORM_Q = ast.literal_eval(getenv("FORM_Q"))
 FORM_TABLES = ast.literal_eval(getenv("FORM_TABLES"))
+
+DATABASE_NAME = getenv("DATABASE_NAME")
 
 hash_users = {}
 
 # All handlers should be attached to the Router (or Dispatcher)
 dp = Dispatcher()
+db = Database(DATABASE_NAME)
 
 
 class TaskForm(StatesGroup):
@@ -51,6 +58,8 @@ async def command_start_handler(message: Message) -> None:
     builder.row(types.InlineKeyboardButton(
         text=FORM_TEXT, callback_data="form")
     )
+    user = User(message.from_user.id)
+    await db.add_user(user)
     try:
         await message.delete()
     except TelegramBadRequest as e:
@@ -116,6 +125,7 @@ async def logic_form(current_state_index, message: types.Message, state: FSMCont
     )
     await message.answer(answer, reply_markup=builder.as_markup())
 
+
 async def universal_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
@@ -148,8 +158,8 @@ async def callback_handler(call: types.CallbackQuery, state: FSMContext):
     if current_state is None:
         try:
             await call.message.delete()
-            await call.message.answer("Анкета успешно пройдена")
             await command_start_handler(call.message)
+            await call.message.answer(FORM_COMPLETED_TEXT)
         except TelegramBadRequest as e:
             print(f"Не удалось удалить сообщение: {e}")
     else:
@@ -163,6 +173,8 @@ async def callback_handler(call: types.CallbackQuery):
 
 async def main() -> None:
     bot = Bot(TOKEN)
+    await db.connect()
+    await db.create_table_user()
     await dp.start_polling(bot)
 
 

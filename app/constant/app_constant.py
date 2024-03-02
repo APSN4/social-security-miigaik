@@ -19,3 +19,9 @@ FORM_TABLES = ast.literal_eval(getenv("FORM_TABLES"))
 ANY_BUTTONS = ast.literal_eval(getenv("ANY_BUTTONS"))
 
 DATABASE_NAME = getenv("DATABASE_NAME")
+ABOUT_SSO = getenv("ABOUT_SSO")
+SSO_TEXT = getenv("SSO_TEXT").replace("\\n", "\n")
+
+ADMIN_ID = ast.literal_eval(getenv("ADMIN_ID"))
+ADMIN_HELP_TEXT = getenv("ADMIN_HELP_TEXT")
+SEND_ALL_TIMEOUT = getenv("SEND_ALL_TIMEOUT")

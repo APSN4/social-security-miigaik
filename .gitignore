@@ -32,3 +32,4 @@ Temporary Items
 .idea
 __pycache__/
 *.sqlite3
+files/

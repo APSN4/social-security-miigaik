@@ -1,20 +1,21 @@
-import ast
 import asyncio
 import logging
+import os
+import re
 import sys
-from os import getenv
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message
+from aiogram.types import Message, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from app.constant.app_constant import TOKEN, MAIN_MENU_TEXT
+from app.constant.app_constant import TOKEN, MAIN_MENU_TEXT, ADMIN_HELP_TEXT, ABOUT_SSO, SSO_TEXT, SEND_ALL_TIMEOUT
 from app.constant.app_constant import HELLO_MSG, HELLO_MSG_BUTTONS, HELLO_MSG_IN_BUTTONS
 from app.constant.app_constant import FORM_TEXT, FORM_COMPLETED_TEXT, FORM_Q, FORM_TABLES
-from app.constant.app_constant import ANY_BUTTONS, DATABASE_NAME
+from app.constant.app_constant import ANY_BUTTONS, DATABASE_NAME, ADMIN_ID
 
 from app.domain.dto.user import User
 from config.database import Database
@@ -24,6 +25,15 @@ hash_users = {}
 # All handlers should be attached to the Router (or Dispatcher)
 dp = Dispatcher()
 db = Database(DATABASE_NAME)
+bot = Bot(TOKEN)
+
+
+class AdminStates(StatesGroup):
+    WAITING_FOR_FILE = 'waiting_for_file'
+
+
+class AdminStatesSender(StatesGroup):
+    WAITING_FOR_TEXT = 'waiting_for_text'
 
 
 class TaskForm(StatesGroup):
@@ -35,7 +45,7 @@ for question_index in range(len(FORM_Q)):
 
 
 @dp.message(CommandStart())
-async def command_start_handler(message: Message) -> None:
+async def command_start_handler(message: Message, user_id: int = None) -> None:
     print(HELLO_MSG_IN_BUTTONS)
     builder = InlineKeyboardBuilder()
     for key, value in HELLO_MSG_BUTTONS.items():
@@ -45,7 +55,10 @@ async def command_start_handler(message: Message) -> None:
     builder.row(types.InlineKeyboardButton(
         text=FORM_TEXT, callback_data="form")
     )
-    user = User(message.from_user.id)
+    builder.row(types.InlineKeyboardButton(
+        text=ABOUT_SSO, callback_data="about")
+    )
+    user = User(user_id) if user_id else User(message.from_user.id)
     await db.add_user(user)
     try:
         await message.delete()
@@ -80,6 +93,8 @@ async def callback_handler(call: types.CallbackQuery):
     await message.delete()
     builder = InlineKeyboardBuilder()
     answer = "Выберите значение"
+    message_type = None
+    file_id = None
 
     for key, value in ANY_BUTTONS.items():
         if value[1] == call.data:
@@ -92,11 +107,22 @@ async def callback_handler(call: types.CallbackQuery):
                         )
                 case 1:
                     answer = value[2]
+                case 3:
+                    message_type = 3
+                    file_id = value[4]
 
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
     await message.answer(answer, reply_markup=builder.as_markup())
+    if message_type == 3:
+        file_path = await db.get_file_data(file_id)
+        await document_send(call, file_path)
+
+
+async def document_send(call: types.CallbackQuery, file_path):
+    file = FSInputFile(path=file_path)
+    await bot.send_document(call.from_user.id, document=file)  # caption="Документы для ознакомления"
 
 
 async def logic_form(current_state_index, message: types.Message, state: FSMContext):
@@ -195,15 +221,92 @@ async def callback_handler(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_main_menu")
 async def callback_handler(call: types.CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
     await state.set_state(None)
     await hash_delete_user(call)
-    await command_start_handler(call.message)
+    await command_start_handler(call.message, user_id=user_id)
+
+
+@dp.callback_query(lambda call: call.data == "about")
+async def callback_handler(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await hash_delete_user(call)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(
+        text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
+    )
+
+    await call.message.answer(SSO_TEXT, reply_markup=builder.as_markup())
+
+
+@dp.message(Command("admin"))
+async def admin_menu(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id in ADMIN_ID:
+        command_parts = re.findall(r'\S+', call.text.strip())
+        if len(command_parts) <= 1:
+            await call.answer(ADMIN_HELP_TEXT)
+            return
+
+        argument = command_parts[1]
+        if argument == "file":
+            await call.answer("Пришлите файл.")
+            await state.set_state(AdminStates.WAITING_FOR_FILE)
+        elif argument == "delfile":
+            try:
+                argument_id = command_parts[2]
+            except IndexError:
+                await call.answer("Укажите ID.")
+                return
+            is_deleted = await db.delete_file(argument_id)
+            if is_deleted:
+                await call.answer(f"Запись из БД успешно удалена.\nID: {argument_id}")
+            else:
+                await call.answer(f"Запись в БД не найдена.\nID: {argument_id}")
+        elif argument == "sendall":
+            # await state.set_state(AdminStatesSender.WAITING_FOR_TEXT)
+            # await state.update_data(argument_key=argument_value)
+            await asyncio.sleep(SEND_ALL_TIMEOUT)
+            users = await db.get_users()
+            argument_text = command_parts[2]
+            for row in users:
+                try:
+                    await bot.send_message(row[1], argument_text)
+                    if int(row[1]) != 1:
+                        await db.set_active_user(row[0], 1)
+                except Exception as e:
+                    await db.set_active_user(row[0], 0)
+
+
+@dp.message(lambda message: message.content_type == types.ContentType.DOCUMENT)
+async def handle_file(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == AdminStates.WAITING_FOR_FILE:
+        file_id = message.document.file_id
+        file_info = await bot.get_file(file_id)
+
+        file_binary_data = await bot.download_file(file_info.file_path)
+
+        file_name = os.path.basename(file_info.file_path)
+        current_directory = os.getcwd()
+        folder_path = os.path.join(current_directory, "files")
+
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        file_path = os.path.join(folder_path, file_name)
+        with open(file_path, 'wb') as f:
+            f.write(file_binary_data.read())
+
+        file_id = await db.add_file(file_path)
+        await message.answer(f"Файл сохранен в системе.\nID: {file_id}")
+        await state.clear()
 
 
 async def main() -> None:
-    bot = Bot(TOKEN)
     await db.connect()
     await db.create_table_user()
+    await db.create_table_file()
     await dp.start_polling(bot)
 
 

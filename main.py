@@ -11,26 +11,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from dotenv import load_dotenv
+from app.constant.app_constant import TOKEN, MAIN_MENU_TEXT
+from app.constant.app_constant import HELLO_MSG, HELLO_MSG_BUTTONS, HELLO_MSG_IN_BUTTONS
+from app.constant.app_constant import FORM_TEXT, FORM_COMPLETED_TEXT, FORM_Q, FORM_TABLES
+from app.constant.app_constant import ANY_BUTTONS, DATABASE_NAME
 
 from app.domain.dto.user import User
 from config.database import Database
-
-# .env
-load_dotenv()
-TOKEN = getenv("BOT_TOKEN")
-MAIN_MENU_TEXT = getenv("MAIN_MENU_TEXT")
-HELLO_MSG = getenv("HELLO_MSG").replace("\\n", "\n")
-HELLO_MSG_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_BUTTONS"))
-HELLO_MSG_IN_BUTTONS = ast.literal_eval(getenv("HELLO_MSG_IN_BUTTONS"))
-
-FORM_TEXT = getenv("FORM_TEXT")
-FORM_COMPLETED_TEXT = getenv("FORM_COMPLETED_TEXT")
-ANY_BUTTONS = ast.literal_eval(getenv("ANY_BUTTONS"))
-FORM_Q = ast.literal_eval(getenv("FORM_Q"))
-FORM_TABLES = ast.literal_eval(getenv("FORM_TABLES"))
-
-DATABASE_NAME = getenv("DATABASE_NAME")
 
 hash_users = {}
 
@@ -116,17 +103,37 @@ async def logic_form(current_state_index, message: types.Message, state: FSMCont
     builder = InlineKeyboardBuilder()
     keys = list(FORM_Q.keys())
     answer = keys[current_state_index]
+    index_button = 0
     for value in FORM_Q[answer]:
         builder.row(types.InlineKeyboardButton(
-            text=value, callback_data="form_btm")
+            text=value, callback_data=f"form_btm:{index_button}")
         )
+        index_button += 1
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
     await message.answer(answer, reply_markup=builder.as_markup())
 
 
-async def universal_handler(message: types.Message, state: FSMContext):
+async def form_results(call: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+
+    for index, answer in enumerate(hash_users[call.from_user.id]):  # [0, 1, 0]
+        if answer == 0:  # good answer
+            btm_index_form = FORM_TABLES[index]  # [3, 4]
+            for btm_i_answer in btm_index_form:
+                for index_any_btm, (key, value) in enumerate(ANY_BUTTONS.items()):
+                    if index_any_btm == btm_i_answer:
+                        builder.row(types.InlineKeyboardButton(
+                            text=key, callback_data=value[2])
+                        )
+    builder.row(types.InlineKeyboardButton(
+        text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
+    )
+    await call.message.answer(FORM_COMPLETED_TEXT, reply_markup=builder.as_markup())
+
+
+async def universal_handler(call: types.CallbackQuery, message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         current_state_index = int(current_state)
@@ -140,34 +147,56 @@ async def universal_handler(message: types.Message, state: FSMContext):
             await state.set_state(None)
     else:
         await state.set_state("0")
-        await universal_handler(message, state)
+        await hash_delete_user(call)
+        await universal_handler(call, message, state)
     try:
         await message.delete()
     except TelegramBadRequest as e:
         print(f"Не удалось удалить сообщение: {e}")
 
 
+async def hash_add_user(call: types.CallbackQuery, index_button: str):
+    if call.from_user.id in hash_users:
+        data = hash_users[call.from_user.id]
+        data.append(int(index_button))
+        hash_users[call.from_user.id] = data
+    else:
+        hash_users[call.from_user.id] = [int(index_button)]
+    print(hash_users)
+
+
+async def hash_delete_user(call: types.CallbackQuery):
+    if call.from_user.id in hash_users:
+        del hash_users[call.from_user.id]
+
+
 @dp.callback_query(lambda call: call.data == "form")
 async def callback_handler(call: types.CallbackQuery, state: FSMContext):
-    await universal_handler(call.message, state)
+    await universal_handler(call, call.message, state)
 
 
-@dp.callback_query(lambda call: call.data == "form_btm")
+@dp.callback_query(lambda call: call.data.startswith("form_btm"))
 async def callback_handler(call: types.CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
+
+    data_parts = call.data.split(":")
+    index_button = data_parts[1] if len(data_parts) > 1 else None
+    await hash_add_user(call, index_button)
+
     if current_state is None:
         try:
             await call.message.delete()
-            await command_start_handler(call.message)
-            await call.message.answer(FORM_COMPLETED_TEXT)
+            await form_results(call)
         except TelegramBadRequest as e:
             print(f"Не удалось удалить сообщение: {e}")
     else:
-        await universal_handler(call.message, state)
+        await universal_handler(call, call.message, state)
 
 
 @dp.callback_query(lambda call: call.data == "back_to_main_menu")
-async def callback_handler(call: types.CallbackQuery):
+async def callback_handler(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await hash_delete_user(call)
     await command_start_handler(call.message)
 
 

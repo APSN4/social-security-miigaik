@@ -291,7 +291,6 @@ async def admin_menu(call: types.CallbackQuery, state: FSMContext):
 async def handle_file(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state == AdminStatesSender.WAITING_FOR_TEXT:
-        await asyncio.sleep(int(SEND_ALL_TIMEOUT))
         users = await db.get_users()
         argument_text = message.text
         for row in users:
@@ -301,6 +300,7 @@ async def handle_file(message: types.Message, state: FSMContext):
                     await db.set_active_user(row[1], True)
             except TelegramForbiddenError as e:
                 await db.set_active_user(row[1], False)
+            await asyncio.sleep(int(SEND_ALL_TIMEOUT))
 
 
 @dp.message(lambda message: message.content_type == types.ContentType.DOCUMENT)

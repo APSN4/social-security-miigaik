@@ -46,6 +46,26 @@ _Оформление_: `"Тестовая помощь": [0, "mat_help", "drd",
 `4` - Сообщение только с кнопкой `MAIN_MENU_TEXT` и файлами  
 `"Сообщение и файлы": [4, "msk_help", "Текст с отменой", [1]]` 
 
+### Как запустить?
+
+#### Через Docker:  
+1. Перейти в основной каталог, затем `docker build -t sso:v1.4 .`
+2. `docker images`
+3. Скопируйте IMAGE ID
+4. Запустите `docker run -d <IMAGE ID>`
+
+#### На Windows:
+1. Перейти в основной каталог, затем `python -m venv .venv`
+2. `.venv\Scripts\activate.bat`
+3. `pip install -r requrements.txt`
+4. `python main.py`
+
+#### На Linux
+1. Перейти в основной каталог, затем `python -m venv .venv`
+2. `source .venv/bin/activate`
+3. `pip install -r requrements.txt`
+4. `python main.py`
+
 ### .env
 ```dotenv
 BOT_TOKEN=

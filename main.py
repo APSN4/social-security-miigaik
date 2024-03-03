@@ -4,15 +4,16 @@ import os
 import re
 import sys
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ContentType
+from aiogram import Bot, Dispatcher, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from app.constant.app_constant import TOKEN, MAIN_MENU_TEXT, ADMIN_HELP_TEXT, ABOUT_SSO, SSO_TEXT, SEND_ALL_TIMEOUT
+from aiogram.client.session.base import TelegramForbiddenError
+from app.constant.app_constant import TOKEN, MAIN_MENU_TEXT, ADMIN_HELP_TEXT, ABOUT_SSO, SSO_TEXT, SEND_ALL_TIMEOUT, \
+    FORM_TABLES_REPEAT
 from app.constant.app_constant import HELLO_MSG, HELLO_MSG_BUTTONS, HELLO_MSG_IN_BUTTONS
 from app.constant.app_constant import FORM_TEXT, FORM_COMPLETED_TEXT, FORM_Q, FORM_TABLES
 from app.constant.app_constant import ANY_BUTTONS, DATABASE_NAME, ADMIN_ID
@@ -84,7 +85,7 @@ async def callback_handler(call: types.CallbackQuery):
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
-    await message.answer(answer, reply_markup=builder.as_markup())
+    await message.answer(answer.replace("\\n", "\n"), reply_markup=builder.as_markup())
 
 
 @dp.callback_query(lambda call: any(call.data == value[1] for value in ANY_BUTTONS.values()))
@@ -94,7 +95,7 @@ async def callback_handler(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     answer = "Выберите значение"
     message_type = None
-    file_id = None
+    files_id = None
 
     for key, value in ANY_BUTTONS.items():
         if value[1] == call.data:
@@ -109,15 +110,25 @@ async def callback_handler(call: types.CallbackQuery):
                     answer = value[2]
                 case 3:
                     message_type = 3
-                    file_id = value[4]
+                    answer = value[3]
+                    files_id = value[4]
+                    for key_btm, value_btm in value[5].items():
+                        builder.row(types.InlineKeyboardButton(
+                            text=key_btm, callback_data=value_btm)
+                        )
+                case 4:
+                    message_type = 4
+                    answer = value[2]
+                    files_id = value[3]
 
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
-    await message.answer(answer, reply_markup=builder.as_markup())
-    if message_type == 3:
-        file_path = await db.get_file_data(file_id)
-        await document_send(call, file_path)
+    await message.answer(answer.replace("\\n", "\n"), reply_markup=builder.as_markup())
+    if message_type == 3 or message_type == 4:
+        for i in files_id:
+            file_path = await db.get_file_data(i)
+            await document_send(call, file_path)
 
 
 async def document_send(call: types.CallbackQuery, file_path):
@@ -138,11 +149,12 @@ async def logic_form(current_state_index, message: types.Message, state: FSMCont
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
-    await message.answer(answer, reply_markup=builder.as_markup())
+    await message.answer(answer.replace("\\n", "\n"), reply_markup=builder.as_markup())
 
 
 async def form_results(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
+    btm_repeat = []
 
     for index, answer in enumerate(hash_users[call.from_user.id]):  # [0, 1, 0]
         if answer == 0:  # good answer
@@ -150,9 +162,16 @@ async def form_results(call: types.CallbackQuery):
             for btm_i_answer in btm_index_form:
                 for index_any_btm, (key, value) in enumerate(ANY_BUTTONS.items()):
                     if index_any_btm == btm_i_answer:
-                        builder.row(types.InlineKeyboardButton(
-                            text=key, callback_data=value[2])
-                        )
+                        if FORM_TABLES_REPEAT == 1:
+                            builder.row(types.InlineKeyboardButton(
+                                text=key, callback_data=value[2])
+                            )
+                        else:
+                            if key not in btm_repeat:
+                                builder.row(types.InlineKeyboardButton(
+                                    text=key, callback_data=value[2])
+                                )
+                            btm_repeat.append(key)
     builder.row(types.InlineKeyboardButton(
         text=MAIN_MENU_TEXT, callback_data="back_to_main_menu")
     )
@@ -264,18 +283,24 @@ async def admin_menu(call: types.CallbackQuery, state: FSMContext):
             else:
                 await call.answer(f"Запись в БД не найдена.\nID: {argument_id}")
         elif argument == "sendall":
-            # await state.set_state(AdminStatesSender.WAITING_FOR_TEXT)
-            # await state.update_data(argument_key=argument_value)
-            await asyncio.sleep(SEND_ALL_TIMEOUT)
-            users = await db.get_users()
-            argument_text = command_parts[2]
-            for row in users:
-                try:
-                    await bot.send_message(row[1], argument_text)
-                    if int(row[1]) != 1:
-                        await db.set_active_user(row[0], 1)
-                except Exception as e:
-                    await db.set_active_user(row[0], 0)
+            await state.set_state(AdminStatesSender.WAITING_FOR_TEXT)
+            await call.answer("Введите текст, который будет отправлен всем.")
+
+
+@dp.message(lambda message: message.content_type == types.ContentType.TEXT)
+async def handle_file(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == AdminStatesSender.WAITING_FOR_TEXT:
+        await asyncio.sleep(int(SEND_ALL_TIMEOUT))
+        users = await db.get_users()
+        argument_text = message.text
+        for row in users:
+            try:
+                await bot.send_message(row[1], argument_text)
+                if int(row[1]) != 1:
+                    await db.set_active_user(row[1], True)
+            except TelegramForbiddenError as e:
+                await db.set_active_user(row[1], False)
 
 
 @dp.message(lambda message: message.content_type == types.ContentType.DOCUMENT)

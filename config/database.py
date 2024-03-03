@@ -38,9 +38,9 @@ class Database:
 
         return user_id
 
-    async def delete_user(self, user):
+    async def delete_user(self, user_id):
         c = await self.db.cursor()
-        await c.execute("DELETE FROM user_status WHERE user_id = ?", (user.get_user_id(),))
+        await c.execute("DELETE FROM user_status WHERE user_id = ?", (user_id,))
         await self.db.commit()
 
     async def get_user(self, user):
@@ -57,10 +57,7 @@ class Database:
 
     async def set_active_user(self, user_id, active):
         c = await self.db.cursor()
-        await c.execute(
-            "UPDATE user_status SET alive = ? WHERE user_id = ?",
-            (active, user_id)
-        )
+        await c.execute("UPDATE user_status SET alive = ? WHERE user_id = ?", (active, user_id,))
         await self.db.commit()
 
     async def create_table_file(self):
